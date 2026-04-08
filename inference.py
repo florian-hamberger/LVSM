@@ -36,6 +36,9 @@ module, class_name = dataset_name.rsplit(".", 1)
 Dataset = importlib.import_module(module).__dict__[class_name]
 dataset = Dataset(config)
 
+if ddp_info.is_main_process:
+    print(f"Dataset loaded. Number of samples: {len(dataset)}")
+
 datasampler = DistributedSampler(dataset)
 dataloader = DataLoader(
     dataset,
@@ -48,7 +51,9 @@ dataloader = DataLoader(
     drop_last=True,
     sampler=datasampler
 )
-dataloader_iter = iter(dataloader)
+
+if ddp_info.is_main_process:
+    print(f"Dataloader created with drop_last=True, batch_size={config.training.batch_size_per_gpu}")
 
 dist.barrier()
 
@@ -59,7 +64,12 @@ module, class_name = config.model.class_name.rsplit(".", 1)
 LVSM = importlib.import_module(module).__dict__[class_name]
 model = LVSM(config).to(ddp_info.device)
 model = DDP(model, device_ids=[ddp_info.local_rank])
+
+if ddp_info.is_main_process:
+    print(f"Loading checkpoint from: {config.training.checkpoint_dir}")
 model.module.load_ckpt(config.training.checkpoint_dir)
+if ddp_info.is_main_process:
+    print(f"Checkpoint loaded successfully")
 
 
 if ddp_info.is_main_process:  
@@ -76,18 +86,28 @@ dist.barrier()
 datasampler.set_epoch(0)
 model.eval()
 
+batch_count = 0
+if ddp_info.is_main_process:
+    print(f"Starting inference loop...")
+
 with torch.no_grad(), torch.autocast(
     enabled=config.training.use_amp,
     device_type="cuda",
     dtype=amp_dtype_mapping[config.training.amp_dtype],
 ):
     for batch in dataloader:
+        batch_count += 1
+        if ddp_info.is_main_process:
+            print(f"Processing batch {batch_count}...")
         batch = {k: v.to(ddp_info.device) if type(v) == torch.Tensor else v for k, v in batch.items()}
         result = model(batch)
         if config.inference.get("render_video", False):
             result= model.module.render_video(result, **config.inference.render_video_config)
         export_results(result, config.inference_out_dir, compute_metrics=config.inference.get("compute_metrics"))
     torch.cuda.empty_cache()
+
+if ddp_info.is_main_process:
+    print(f"Inference finished. Processed {batch_count} batches.")
 
 
 dist.barrier()

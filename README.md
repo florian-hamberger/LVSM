@@ -51,6 +51,56 @@ pip install -r requirements.txt
 ```
 As we used [xformers](https://github.com/facebookresearch/xformers) `memory_efficient_attention`, the GPU device compute capability needs > 8.0. Otherwise, it would pop up an error. Check your GPU compute capability in [CUDA GPUs Page](https://developer.nvidia.com/cuda-gpus#compute).
 
+### Docker
+If you prefer a containerized setup, build the image from the repository root:
+```bash
+docker build -t lvsm .
+```
+
+Then run inference with a bind mount for your working tree and data:
+```bash
+docker run --rm -it --gpus all \
+    -v "$(pwd):/workspace/LVSM" \
+    -w /workspace/LVSM \
+    lvsm \
+    python inference.py --config configs/LVSM_scene_decoder_only.yaml \
+    training.dataset_path=./preprocessed_data/test/full_list.txt \
+    training.batch_size_per_gpu=4 \
+    training.target_has_input=false \
+    training.num_views=5 \
+    training.square_crop=true \
+    training.num_input_views=2 \
+    training.num_target_views=3 \
+    inference.if_inference=true \
+    inference.compute_metrics=true \
+    inference.render_video=true \
+    inference_out_dir=./experiments/evaluation/test
+```
+This image is intended for GPU-backed Linux or WSL2 Docker setups with NVIDIA Container Toolkit enabled.
+
+You can also use Docker Compose:
+```bash
+docker compose build
+docker compose run --rm lvsm bash
+```
+
+Run inference with Compose:
+```bash
+docker compose run --rm lvsm \
+    python inference.py --config configs/LVSM_scene_decoder_only.yaml \
+    training.dataset_path=./preprocessed_data/test/full_list.txt \
+    training.batch_size_per_gpu=4 \
+    training.target_has_input=false \
+    training.num_views=5 \
+    training.square_crop=true \
+    training.num_input_views=2 \
+    training.num_target_views=3 \
+    inference.if_inference=true \
+    inference.compute_metrics=true \
+    inference.render_video=true \
+    inference_out_dir=./experiments/evaluation/test
+```
+
 ### Data
 Download the RealEstate10K dataset from [this link](http://schadenfreude.csail.mit.edu:8000/), which is provided by [pixelSplat](https://github.com/dcharatan/pixelsplat), and `unzip` the zip file and put the data in `YOUR_RAW_DATAPATH`.
 Run the following command to preprocess the data into our format.

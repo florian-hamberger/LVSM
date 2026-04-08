@@ -1,0 +1,29 @@
+services:
+  lvsm:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: lvsm:latest
+    working_dir: /workspace/LVSM
+    volumes:
+      - ./:/workspace/LVSM
+    tty: true
+    stdin_open: true
+    shm_size: 8gb
+    command: bash
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility,video
+      # Distributed training env vars (single-GPU configuration)
+      - RANK=0
+      - WORLD_SIZE=1
+      - LOCAL_RANK=0
+      - MASTER_ADDR=localhost
+      - MASTER_PORT=29500
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
