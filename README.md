@@ -174,6 +174,40 @@ We use `./data/evaluation_index_re10k.json` to specify the input and target view
 
 After the inference, the code will generate a html file in the `inference_out_dir` folder. You can open the html file to view the results.
 
+### 3.1 Camera Convention Validation (Interactive 3D)
+
+To validate intrinsics/extrinsics and visualize camera poses with textured frustums:
+
+Run the first 10 scenes from each dataset:
+```bash
+python tools/validate_camera_convention.py \
+    --repo-root . \
+    --official-dir preprocessed_data/test \
+    --custom-dir preprocessed_data/test_waymo \
+    --out-dir experiments/camera_validation_10_each_interactive \
+    --official-limit-scenes 10 \
+    --custom-limit-scenes 10 \
+    --max-3d-scenes 10 \
+    --interactive-html
+```
+
+Run all scenes in both datasets:
+```bash
+python tools/validate_camera_convention.py \
+    --repo-root . \
+    --official-dir preprocessed_data/test \
+    --custom-dir preprocessed_data/test_waymo \
+    --out-dir experiments/camera_validation_all_interactive \
+    --official-limit-scenes 0 \
+    --custom-limit-scenes 0 \
+    --max-3d-scenes 0 \
+    --interactive-html
+```
+
+Outputs are written under the selected `--out-dir`, with per-scene interactive HTML files in:
+- `official_test/scenes/*.html`
+- `custom_test_waymo/scenes/*.html`
+
 ## 4. Citation 
 
 If you find this work useful in your research, please consider citing:
