@@ -440,6 +440,29 @@ def compute_visible_plane(c2w: np.ndarray, fxfycxcy: np.ndarray, image_wh: Tuple
     return top_left, top_right, bottom_right, bottom_left
 
 
+def compute_frustum_depth(
+    fxfycxcy: np.ndarray,
+    image_wh: Tuple[int, int],
+    adaptive_depth: float,
+    frustum_scale: float = 1.0,
+    frustum_world_width: float | None = None,
+) -> float:
+    scale = max(frustum_scale, 1e-6)
+    if frustum_world_width is not None and frustum_world_width > 0:
+        width_px = max(float(image_wh[0]), 1.0)
+        fx = max(float(fxfycxcy[0]), 1e-6)
+        base_depth = frustum_world_width * fx / width_px
+    else:
+        base_depth = adaptive_depth
+    return max(1e-6, base_depth * scale)
+
+
+def compute_axis_len(depth: float, frustum_world_width: float | None = None) -> float:
+    if frustum_world_width is not None and frustum_world_width > 0:
+        return max(0.05, frustum_world_width * 0.2)
+    return max(0.05, depth * 0.35)
+
+
 def plot_textured_camera_plane(
     ax,
     c2w: np.ndarray,
@@ -455,6 +478,7 @@ def plot_textured_camera_plane(
     texture_flip_v: bool = False,
     texture_transpose_uv: bool = False,
     texture_rotate_deg: int = 0,
+    frustum_world_width: float | None = None,
 ) -> None:
     center, right, down, forward = camera_axes(c2w)
     top_left, top_right, bottom_right, bottom_left = compute_visible_plane(c2w, fxfycxcy, image_wh, depth)
@@ -508,18 +532,18 @@ def plot_textured_camera_plane(
     ax.text(center[0], center[1], center[2], label_text, fontsize=7, color=color)
 
     # small axis triad to emphasize camera orientation
-    axis_len = depth * 0.35
+    axis_len = compute_axis_len(depth, frustum_world_width=frustum_world_width)
     ax.plot([center[0], center[0] + right[0] * axis_len], [center[1], center[1] + right[1] * axis_len], [center[2], center[2] + right[2] * axis_len], color=(1.0, 0.2, 0.2), linewidth=1.2)
     ax.plot([center[0], center[0] + down[0] * axis_len], [center[1], center[1] + down[1] * axis_len], [center[2], center[2] + down[2] * axis_len], color=(0.2, 1.0, 0.2), linewidth=1.2)
     ax.plot([center[0], center[0] + forward[0] * axis_len], [center[1], center[1] + forward[1] * axis_len], [center[2], center[2] + forward[2] * axis_len], color=(0.2, 0.4, 1.0), linewidth=1.2)
 
 
-def scene_bbox_from_poses(c2w: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+def scene_bbox_from_poses(c2w: np.ndarray, axis_padding: float = 0.0) -> Tuple[np.ndarray, np.ndarray]:
     centers = c2w[:, :3, 3]
     bbox_min = np.min(centers, axis=0)
     bbox_max = np.max(centers, axis=0)
     span = bbox_max - bbox_min
-    pad = np.maximum(span * 0.2, 1.0)
+    pad = np.maximum(span * 0.2, 1.0) + max(axis_padding, 0.0)
     return bbox_min - pad, bbox_max + pad
 
 
@@ -610,8 +634,10 @@ def make_camera_traces(
     image_paths: List[Path],
     image_wh: Tuple[int, int],
     candidate_name: str,
-    max_frames: int = 8,
+    max_frames: int | None = None,
     visible: bool = False,
+    frustum_scale: float = 1.0,
+    frustum_world_width: float | None = 2.0,
     interactive_texture_max_width: int = 96,
     texture_resample: str = "bilinear",
     texture_flip_u: bool = False,
@@ -619,10 +645,13 @@ def make_camera_traces(
     texture_transpose_uv: bool = False,
     texture_rotate_deg: int = 0,
 ) -> List[object]:
-    indices = np.linspace(0, len(c2w) - 1, num=min(max_frames, len(c2w)), dtype=int)
+    if max_frames is None or max_frames <= 0:
+        indices = np.arange(len(c2w), dtype=int)
+    else:
+        indices = np.linspace(0, len(c2w) - 1, num=min(max_frames, len(c2w)), dtype=int)
     centers = c2w[:, :3, 3]
     motion = camera_motion_metrics(c2w)
-    plane_depth = max(0.5, motion["median_step"] * 4.0)
+    adaptive_depth = max(0.5, motion["median_step"] * 4.0)
 
     traces: List[object] = []
     traces.append(
@@ -642,6 +671,13 @@ def make_camera_traces(
     for idx in indices:
         center, right, down, forward = camera_axes(c2w[idx])
         fx, fy, cx, cy = intrinsics[idx]
+        plane_depth = compute_frustum_depth(
+            intrinsics[idx],
+            image_wh,
+            adaptive_depth,
+            frustum_scale=frustum_scale,
+            frustum_world_width=frustum_world_width,
+        )
         top_left, top_right, bottom_right, bottom_left = compute_visible_plane(c2w[idx], intrinsics[idx], image_wh, plane_depth)
 
         traces.append(
@@ -686,7 +722,7 @@ def make_camera_traces(
                 texture_rotate_deg=texture_rotate_deg,
             )
         )
-        axis_len = plane_depth * 0.35
+        axis_len = compute_axis_len(plane_depth, frustum_world_width=frustum_world_width)
         traces.append(
             go.Scatter3d(
                 x=[center[0], center[0] + right[0] * axis_len],
@@ -732,6 +768,10 @@ def render_interactive_scene(
     c2w_map: Dict[str, np.ndarray],
     out_path: Path,
     title: str,
+    interactive_max_frames: int | None = None,
+    frustum_scale: float = 1.0,
+    frustum_world_width: float | None = 2.0,
+    axis_padding: float = 0.0,
     interactive_texture_max_width: int = 96,
     texture_resample: str = "bilinear",
     texture_flip_u: bool = False,
@@ -753,7 +793,10 @@ def render_interactive_scene(
                 scene.image_paths,
                 scene.image_size_wh,
                 candidate_name,
+                max_frames=interactive_max_frames,
                 visible=visible,
+                frustum_scale=frustum_scale,
+                frustum_world_width=frustum_world_width,
                 interactive_texture_max_width=interactive_texture_max_width,
                 texture_resample=texture_resample,
                 texture_flip_u=texture_flip_u,
@@ -778,9 +821,7 @@ def render_interactive_scene(
             )
         )
 
-    centers = c2w_map[candidate_names[0]][:, :3, 3]
-    bbox_min, bbox_max = scene_bbox_from_poses(c2w_map[candidate_names[0]])
-    centers_mid = np.mean(centers, axis=0)
+    bbox_min, bbox_max = scene_bbox_from_poses(c2w_map[candidate_names[0]], axis_padding=axis_padding)
     span = np.maximum(bbox_max - bbox_min, 1e-6)
 
     fig = go.Figure(data=traces)
@@ -801,9 +842,9 @@ def render_interactive_scene(
             )
         ],
         scene=dict(
-            xaxis=dict(title="X", range=[centers_mid[0] - span[0] * 0.65, centers_mid[0] + span[0] * 0.65]),
-            yaxis=dict(title="Y", range=[centers_mid[1] - span[1] * 0.65, centers_mid[1] + span[1] * 0.65]),
-            zaxis=dict(title="Z", range=[centers_mid[2] - span[2] * 0.65, centers_mid[2] + span[2] * 0.65]),
+            xaxis=dict(title="X", range=[bbox_min[0], bbox_max[0]]),
+            yaxis=dict(title="Y", range=[bbox_min[1], bbox_max[1]]),
+            zaxis=dict(title="Z", range=[bbox_min[2], bbox_max[2]]),
             aspectmode="manual",
             aspectratio=dict(x=max(span[0], 1e-6), y=max(span[1], 1e-6), z=max(span[2], 1e-6)),
             camera=dict(eye=dict(x=1.6, y=-1.8, z=1.0)),
@@ -820,6 +861,9 @@ def render_3d_scene(
     out_path: Path,
     title: str,
     max_frames: int = 8,
+    frustum_scale: float = 1.0,
+    frustum_world_width: float | None = 2.0,
+    axis_padding: float = 0.0,
     texture_max_width: int = 128,
     texture_resample: str = "bilinear",
     texture_flip_u: bool = False,
@@ -830,7 +874,7 @@ def render_3d_scene(
     indices = np.linspace(0, len(c2w) - 1, num=min(max_frames, len(c2w)), dtype=int)
     centers = c2w[:, :3, 3]
     motion = camera_motion_metrics(c2w)
-    plane_depth = max(0.5, motion["median_step"] * 4.0)
+    adaptive_depth = max(0.5, motion["median_step"] * 4.0)
 
     fig = plt.figure(figsize=(15, 11))
     ax = fig.add_subplot(111, projection="3d")
@@ -842,6 +886,13 @@ def render_3d_scene(
     for rank, idx in enumerate(indices):
         color = plt.cm.tab10(rank % 10)[:3]
         label = f"{idx:03d}"
+        plane_depth = compute_frustum_depth(
+            scene.intrinsics[idx],
+            scene.image_size_wh,
+            adaptive_depth,
+            frustum_scale=frustum_scale,
+            frustum_world_width=frustum_world_width,
+        )
         plot_textured_camera_plane(
             ax,
             c2w[idx],
@@ -857,15 +908,15 @@ def render_3d_scene(
             texture_flip_v=texture_flip_v,
             texture_transpose_uv=texture_transpose_uv,
             texture_rotate_deg=texture_rotate_deg,
+            frustum_world_width=frustum_world_width,
         )
 
-    bbox_min, bbox_max = scene_bbox_from_poses(c2w)
-    centers_mid = np.mean(centers, axis=0)
+    bbox_min, bbox_max = scene_bbox_from_poses(c2w, axis_padding=axis_padding)
     span = bbox_max - bbox_min
     span = np.maximum(span, 1e-6)
-    ax.set_xlim(centers_mid[0] - span[0] * 0.6, centers_mid[0] + span[0] * 0.6)
-    ax.set_ylim(centers_mid[1] - span[1] * 0.6, centers_mid[1] + span[1] * 0.6)
-    ax.set_zlim(centers_mid[2] - span[2] * 0.6, centers_mid[2] + span[2] * 0.6)
+    ax.set_xlim(bbox_min[0], bbox_max[0])
+    ax.set_ylim(bbox_min[1], bbox_max[1])
+    ax.set_zlim(bbox_min[2], bbox_max[2])
     ax.set_xlabel("X")
     ax.set_ylabel("Y")
     ax.set_zlabel("Z")
@@ -903,6 +954,10 @@ def evaluate_scene(
     reference_median_step: float | None = None,
     render_3d_candidates: List[str] | None = None,
     render_interactive: bool = False,
+    interactive_max_frames: int | None = None,
+    frustum_scale: float = 0.75,
+    frustum_world_width: float | None = 2.0,
+    axis_padding: float = 0.0,
     texture_max_width: int = 128,
     interactive_texture_max_width: int = 96,
     texture_resample: str = "bilinear",
@@ -950,6 +1005,9 @@ def evaluate_scene(
             candidates[candidate_name],
             out_dir / f"{scene.scene_name}__{candidate_name}__3d.png",
             f"{scene.scene_name} | {candidate_name} | textured frustums",
+            frustum_scale=frustum_scale,
+            frustum_world_width=frustum_world_width,
+            axis_padding=axis_padding,
             texture_max_width=texture_max_width,
             texture_resample=texture_resample,
             texture_flip_u=texture_flip_u,
@@ -969,6 +1027,10 @@ def evaluate_scene(
             interactive_candidates,
             html_path,
             f"{scene.scene_name} | interactive camera viewer",
+            interactive_max_frames=interactive_max_frames,
+            frustum_scale=frustum_scale,
+            frustum_world_width=frustum_world_width,
+            axis_padding=axis_padding,
             interactive_texture_max_width=interactive_texture_max_width,
             texture_resample=texture_resample,
             texture_flip_u=texture_flip_u,
@@ -1041,6 +1103,10 @@ def run_dataset(
     reference_median_step: float | None = None,
     max_3d_scenes: int | None = None,
     interactive: bool = False,
+    interactive_max_frames: int | None = None,
+    frustum_scale: float = 0.75,
+    frustum_world_width: float | None = 2.0,
+    axis_padding: float = 0.0,
     texture_max_width: int = 128,
     interactive_texture_max_width: int = 96,
     texture_resample: str = "bilinear",
@@ -1067,6 +1133,10 @@ def run_dataset(
             reference_median_step=reference_median_step,
             render_3d_candidates=scene_render_candidates,
             render_interactive=interactive,
+            interactive_max_frames=interactive_max_frames,
+            frustum_scale=frustum_scale,
+            frustum_world_width=frustum_world_width,
+            axis_padding=axis_padding,
             texture_max_width=texture_max_width,
             interactive_texture_max_width=interactive_texture_max_width,
             texture_resample=texture_resample,
@@ -1182,13 +1252,37 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--max-3d-scenes",
         type=int,
-        default=3,
+        default=0,
         help="Render 3D textured visualizations for only the first N scenes per dataset. Use 0 or negative for all.",
     )
     parser.add_argument(
         "--interactive-html",
         action="store_true",
         help="Also write interactive HTML viewers for each evaluated scene.",
+    )
+    parser.add_argument(
+        "--interactive-max-frames",
+        type=int,
+        default=0,
+        help="Maximum number of camera poses shown in interactive HTML. Use 0 or negative to show all poses.",
+    )
+    parser.add_argument(
+        "--frustum-scale",
+        type=float,
+        default=1.0,
+        help="Global scale multiplier for frustum size. Values <1 make frustums smaller.",
+    )
+    parser.add_argument(
+        "--frustum-world-width",
+        type=float,
+        default=4.0,
+        help="Target frustum image-plane width in world units. Set <=0 to disable fixed-size mode.",
+    )
+    parser.add_argument(
+        "--axis-padding",
+        type=float,
+        default=5.0,
+        help="Extra axis-range padding in world units added on both min/max ends of each axis.",
     )
     parser.add_argument(
         "--texture-resample",
@@ -1206,7 +1300,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--interactive-texture-max-width",
         type=int,
-        default=96,
+        default=64,
         help="Maximum texture width for interactive HTML frustum texturing. Increase for sharper textures (larger HTML / slower rendering).",
     )
     parser.add_argument(
@@ -1252,6 +1346,14 @@ def normalize_scene_limit(v: int) -> int | None:
     return None if v <= 0 else v
 
 
+def normalize_count_limit(v: int) -> int | None:
+    return None if v <= 0 else v
+
+
+def normalize_positive_float(v: float) -> float | None:
+    return v if v > 0 else None
+
+
 def main() -> None:
     args = parse_args()
     repo_root = args.repo_root.resolve()
@@ -1264,6 +1366,10 @@ def main() -> None:
     print(f"official_dir: {official_dir}")
     print(f"custom_dir: {custom_dir}")
     print(f"out_dir: {out_root}")
+    print(f"frustum_scale: {args.frustum_scale}")
+    print(f"frustum_world_width: {args.frustum_world_width}")
+    print(f"axis_padding: {args.axis_padding}")
+    print(f"interactive_max_frames: {args.interactive_max_frames}")
     print(f"texture_resample: {args.texture_resample}")
     print(f"texture_max_width: {args.texture_max_width}")
     print(f"interactive_texture_max_width: {args.interactive_texture_max_width}")
@@ -1283,6 +1389,10 @@ def main() -> None:
             limit_scenes=normalize_limit(args.official_limit_scenes),
             max_3d_scenes=normalize_scene_limit(args.max_3d_scenes),
             interactive=args.interactive_html,
+            interactive_max_frames=normalize_count_limit(args.interactive_max_frames),
+            frustum_scale=args.frustum_scale,
+            frustum_world_width=normalize_positive_float(args.frustum_world_width),
+            axis_padding=max(args.axis_padding, 0.0),
             texture_max_width=args.texture_max_width,
             interactive_texture_max_width=args.interactive_texture_max_width,
             texture_resample=args.texture_resample,
@@ -1316,6 +1426,10 @@ def main() -> None:
             reference_median_step=official_ref_step,
             max_3d_scenes=normalize_scene_limit(args.max_3d_scenes),
             interactive=args.interactive_html,
+            interactive_max_frames=normalize_count_limit(args.interactive_max_frames),
+            frustum_scale=args.frustum_scale,
+            frustum_world_width=normalize_positive_float(args.frustum_world_width),
+            axis_padding=max(args.axis_padding, 0.0),
             texture_max_width=args.texture_max_width,
             interactive_texture_max_width=args.interactive_texture_max_width,
             texture_resample=args.texture_resample,
