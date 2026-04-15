@@ -188,7 +188,9 @@ python tools/validate_camera_convention.py \
     --official-limit-scenes 10 \
     --custom-limit-scenes 10 \
     --max-3d-scenes 10 \
-    --interactive-html
+    --interactive-html \
+    --texture-resample nearest \
+    --interactive-texture-max-width 128
 ```
 
 Run all scenes in both datasets:
@@ -201,8 +203,16 @@ python tools/validate_camera_convention.py \
     --official-limit-scenes 0 \
     --custom-limit-scenes 0 \
     --max-3d-scenes 0 \
-    --interactive-html
+    --interactive-html \
+    --texture-resample nearest \
+    --interactive-texture-max-width 128
 ```
+
+Texture/frustum controls:
+- `--texture-resample {nearest,bilinear,bicubic}`: downsampling filter for frustum textures (`nearest` gives crisp pixels).
+- `--texture-max-width`: texture width for static PNG 3D frustum renders.
+- `--interactive-texture-max-width`: texture width for interactive HTML frustum renders.
+- `--texture-flip-u`, `--texture-flip-v`, `--texture-transpose-uv`, `--texture-rotate-deg {0,90,180,270}`: UV orientation controls if textures appear mirrored/rotated.
 
 Outputs are written under the selected `--out-dir`, with per-scene interactive HTML files in:
 - `official_test/scenes/*.html`

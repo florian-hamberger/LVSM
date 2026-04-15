@@ -332,18 +332,79 @@ def draw_topdown_trajectory(c2w: np.ndarray, out_path: Path, title: str) -> None
 
 
 def load_texture_rgb(image_path: Path, max_tex_width: int = 128) -> np.ndarray:
+    return load_texture_rgb_with_mode(image_path, max_tex_width=max_tex_width, resample_mode="bilinear")
+
+
+def get_pil_resample(resample_mode: str) -> int:
+    mode = resample_mode.lower()
+    if mode == "nearest":
+        return Image.NEAREST
+    if mode == "bilinear":
+        return Image.BILINEAR
+    if mode == "bicubic":
+        return Image.BICUBIC
+    raise ValueError(f"Unsupported resample mode: {resample_mode}")
+
+
+def load_texture_rgb_with_mode(
+    image_path: Path,
+    max_tex_width: int = 128,
+    resample_mode: str = "bilinear",
+) -> np.ndarray:
     with Image.open(image_path) as im:
         rgb = im.convert("RGB")
         w, h = rgb.size
         if w > max_tex_width:
             new_w = max_tex_width
             new_h = max(8, int(round(h * new_w / max(w, 1))))
-            rgb = rgb.resize((new_w, new_h), resample=Image.BILINEAR)
+            rgb = rgb.resize((new_w, new_h), resample=get_pil_resample(resample_mode))
         return np.asarray(rgb, dtype=np.uint8)
 
 
-def load_texture_rgba_strings(image_path: Path, max_tex_width: int = 96) -> np.ndarray:
-    tex = load_texture_rgb(image_path, max_tex_width=max_tex_width)
+def transform_texture(
+    tex: np.ndarray,
+    flip_u: bool = False,
+    flip_v: bool = False,
+    transpose_uv: bool = False,
+    rotate_deg: int = 0,
+) -> np.ndarray:
+    out = tex
+    if transpose_uv:
+        out = np.transpose(out, (1, 0, 2))
+    if flip_u:
+        out = out[:, ::-1, :]
+    if flip_v:
+        out = out[::-1, :, :]
+
+    if rotate_deg not in (0, 90, 180, 270):
+        raise ValueError(f"rotate_deg must be one of 0/90/180/270, got {rotate_deg}")
+    if rotate_deg:
+        k = rotate_deg // 90
+        out = np.rot90(out, k=k)
+    return out
+
+
+def load_texture_rgba_strings(
+    image_path: Path,
+    max_tex_width: int = 96,
+    resample_mode: str = "bilinear",
+    flip_u: bool = False,
+    flip_v: bool = False,
+    transpose_uv: bool = False,
+    rotate_deg: int = 0,
+) -> np.ndarray:
+    tex = load_texture_rgb_with_mode(
+        image_path,
+        max_tex_width=max_tex_width,
+        resample_mode=resample_mode,
+    )
+    tex = transform_texture(
+        tex,
+        flip_u=flip_u,
+        flip_v=flip_v,
+        transpose_uv=transpose_uv,
+        rotate_deg=rotate_deg,
+    )
     alpha = np.full((*tex.shape[:2], 1), 255, dtype=np.uint8)
     rgba = np.concatenate([tex, alpha], axis=2)
     return np.array(
@@ -379,11 +440,37 @@ def compute_visible_plane(c2w: np.ndarray, fxfycxcy: np.ndarray, image_wh: Tuple
     return top_left, top_right, bottom_right, bottom_left
 
 
-def plot_textured_camera_plane(ax, c2w: np.ndarray, fxfycxcy: np.ndarray, image_wh: Tuple[int, int], image_path: Path, depth: float, label: str, color: Tuple[float, float, float]) -> None:
+def plot_textured_camera_plane(
+    ax,
+    c2w: np.ndarray,
+    fxfycxcy: np.ndarray,
+    image_wh: Tuple[int, int],
+    image_path: Path,
+    depth: float,
+    label: str,
+    color: Tuple[float, float, float],
+    texture_max_width: int = 128,
+    texture_resample: str = "bilinear",
+    texture_flip_u: bool = False,
+    texture_flip_v: bool = False,
+    texture_transpose_uv: bool = False,
+    texture_rotate_deg: int = 0,
+) -> None:
     center, right, down, forward = camera_axes(c2w)
     top_left, top_right, bottom_right, bottom_left = compute_visible_plane(c2w, fxfycxcy, image_wh, depth)
 
-    tex = load_texture_rgb(image_path)
+    tex = load_texture_rgb_with_mode(
+        image_path,
+        max_tex_width=texture_max_width,
+        resample_mode=texture_resample,
+    )
+    tex = transform_texture(
+        tex,
+        flip_u=texture_flip_u,
+        flip_v=texture_flip_v,
+        transpose_uv=texture_transpose_uv,
+        rotate_deg=texture_rotate_deg,
+    )
     tex_h, tex_w = tex.shape[:2]
     if tex_w < 2 or tex_h < 2:
         return
@@ -480,13 +567,26 @@ def make_textured_plane_trace(
     depth: float,
     name: str,
     visible: bool,
-    rows: int = 18,
-    cols: int = 18,
+    texture_max_width: int = 96,
+    texture_resample: str = "bilinear",
+    texture_flip_u: bool = False,
+    texture_flip_v: bool = False,
+    texture_transpose_uv: bool = False,
+    texture_rotate_deg: int = 0,
 ):
     top_left, top_right, bottom_right, bottom_left = compute_visible_plane(c2w, fxfycxcy, image_wh, depth)
-    plane = plane_grid_from_corners(top_left, top_right, bottom_right, bottom_left, rows, cols)
-    tex = load_texture_rgba_strings(image_path, max_tex_width=cols)
-    ii, jj, kk = mesh_indices(rows, cols)
+    tex = load_texture_rgba_strings(
+        image_path,
+        max_tex_width=texture_max_width,
+        resample_mode=texture_resample,
+        flip_u=texture_flip_u,
+        flip_v=texture_flip_v,
+        transpose_uv=texture_transpose_uv,
+        rotate_deg=texture_rotate_deg,
+    )
+    tex_h, tex_w = tex.shape[:2]
+    plane = plane_grid_from_corners(top_left, top_right, bottom_right, bottom_left, tex_h, tex_w)
+    ii, jj, kk = mesh_indices(tex_h, tex_w)
 
     return go.Mesh3d(
         x=plane[:, :, 0].reshape(-1),
@@ -504,7 +604,21 @@ def make_textured_plane_trace(
     )
 
 
-def make_camera_traces(c2w: np.ndarray, intrinsics: np.ndarray, image_paths: List[Path], image_wh: Tuple[int, int], candidate_name: str, max_frames: int = 8, visible: bool = False) -> List[object]:
+def make_camera_traces(
+    c2w: np.ndarray,
+    intrinsics: np.ndarray,
+    image_paths: List[Path],
+    image_wh: Tuple[int, int],
+    candidate_name: str,
+    max_frames: int = 8,
+    visible: bool = False,
+    interactive_texture_max_width: int = 96,
+    texture_resample: str = "bilinear",
+    texture_flip_u: bool = False,
+    texture_flip_v: bool = False,
+    texture_transpose_uv: bool = False,
+    texture_rotate_deg: int = 0,
+) -> List[object]:
     indices = np.linspace(0, len(c2w) - 1, num=min(max_frames, len(c2w)), dtype=int)
     centers = c2w[:, :3, 3]
     motion = camera_motion_metrics(c2w)
@@ -564,6 +678,12 @@ def make_camera_traces(c2w: np.ndarray, intrinsics: np.ndarray, image_paths: Lis
                 plane_depth,
                 f"{candidate_name} image {idx:03d}",
                 visible=visible,
+                texture_max_width=interactive_texture_max_width,
+                texture_resample=texture_resample,
+                texture_flip_u=texture_flip_u,
+                texture_flip_v=texture_flip_v,
+                texture_transpose_uv=texture_transpose_uv,
+                texture_rotate_deg=texture_rotate_deg,
             )
         )
         axis_len = plane_depth * 0.35
@@ -607,7 +727,18 @@ def make_camera_traces(c2w: np.ndarray, intrinsics: np.ndarray, image_paths: Lis
     return traces
 
 
-def render_interactive_scene(scene: SceneData, c2w_map: Dict[str, np.ndarray], out_path: Path, title: str) -> None:
+def render_interactive_scene(
+    scene: SceneData,
+    c2w_map: Dict[str, np.ndarray],
+    out_path: Path,
+    title: str,
+    interactive_texture_max_width: int = 96,
+    texture_resample: str = "bilinear",
+    texture_flip_u: bool = False,
+    texture_flip_v: bool = False,
+    texture_transpose_uv: bool = False,
+    texture_rotate_deg: int = 0,
+) -> None:
     candidate_names = list(c2w_map.keys())
     traces: List[object] = []
     candidate_trace_ranges: Dict[str, Tuple[int, int]] = {}
@@ -623,6 +754,12 @@ def render_interactive_scene(scene: SceneData, c2w_map: Dict[str, np.ndarray], o
                 scene.image_size_wh,
                 candidate_name,
                 visible=visible,
+                interactive_texture_max_width=interactive_texture_max_width,
+                texture_resample=texture_resample,
+                texture_flip_u=texture_flip_u,
+                texture_flip_v=texture_flip_v,
+                texture_transpose_uv=texture_transpose_uv,
+                texture_rotate_deg=texture_rotate_deg,
             )
         )
         candidate_trace_ranges[candidate_name] = (start, len(traces))
@@ -677,7 +814,19 @@ def render_interactive_scene(scene: SceneData, c2w_map: Dict[str, np.ndarray], o
     pio.write_html(fig, file=str(out_path), include_plotlyjs="cdn", full_html=True, auto_open=False)
 
 
-def render_3d_scene(scene: SceneData, c2w: np.ndarray, out_path: Path, title: str, max_frames: int = 8) -> None:
+def render_3d_scene(
+    scene: SceneData,
+    c2w: np.ndarray,
+    out_path: Path,
+    title: str,
+    max_frames: int = 8,
+    texture_max_width: int = 128,
+    texture_resample: str = "bilinear",
+    texture_flip_u: bool = False,
+    texture_flip_v: bool = False,
+    texture_transpose_uv: bool = False,
+    texture_rotate_deg: int = 0,
+) -> None:
     indices = np.linspace(0, len(c2w) - 1, num=min(max_frames, len(c2w)), dtype=int)
     centers = c2w[:, :3, 3]
     motion = camera_motion_metrics(c2w)
@@ -702,6 +851,12 @@ def render_3d_scene(scene: SceneData, c2w: np.ndarray, out_path: Path, title: st
             plane_depth,
             label,
             color,
+            texture_max_width=texture_max_width,
+            texture_resample=texture_resample,
+            texture_flip_u=texture_flip_u,
+            texture_flip_v=texture_flip_v,
+            texture_transpose_uv=texture_transpose_uv,
+            texture_rotate_deg=texture_rotate_deg,
         )
 
     bbox_min, bbox_max = scene_bbox_from_poses(c2w)
@@ -748,6 +903,13 @@ def evaluate_scene(
     reference_median_step: float | None = None,
     render_3d_candidates: List[str] | None = None,
     render_interactive: bool = False,
+    texture_max_width: int = 128,
+    interactive_texture_max_width: int = 96,
+    texture_resample: str = "bilinear",
+    texture_flip_u: bool = False,
+    texture_flip_v: bool = False,
+    texture_transpose_uv: bool = False,
+    texture_rotate_deg: int = 0,
 ) -> Dict[str, object]:
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -788,6 +950,12 @@ def evaluate_scene(
             candidates[candidate_name],
             out_dir / f"{scene.scene_name}__{candidate_name}__3d.png",
             f"{scene.scene_name} | {candidate_name} | textured frustums",
+            texture_max_width=texture_max_width,
+            texture_resample=texture_resample,
+            texture_flip_u=texture_flip_u,
+            texture_flip_v=texture_flip_v,
+            texture_transpose_uv=texture_transpose_uv,
+            texture_rotate_deg=texture_rotate_deg,
         )
 
     if render_interactive:
@@ -801,6 +969,12 @@ def evaluate_scene(
             interactive_candidates,
             html_path,
             f"{scene.scene_name} | interactive camera viewer",
+            interactive_texture_max_width=interactive_texture_max_width,
+            texture_resample=texture_resample,
+            texture_flip_u=texture_flip_u,
+            texture_flip_v=texture_flip_v,
+            texture_transpose_uv=texture_transpose_uv,
+            texture_rotate_deg=texture_rotate_deg,
         )
 
     return {
@@ -867,6 +1041,13 @@ def run_dataset(
     reference_median_step: float | None = None,
     max_3d_scenes: int | None = None,
     interactive: bool = False,
+    texture_max_width: int = 128,
+    interactive_texture_max_width: int = 96,
+    texture_resample: str = "bilinear",
+    texture_flip_u: bool = False,
+    texture_flip_v: bool = False,
+    texture_transpose_uv: bool = False,
+    texture_rotate_deg: int = 0,
 ) -> Dict[str, object]:
     scenes = load_dataset_scenes(dataset_dir, repo_root, limit_scenes)
     print(f"Loaded {len(scenes)} scenes from {dataset_name}")
@@ -886,6 +1067,13 @@ def run_dataset(
             reference_median_step=reference_median_step,
             render_3d_candidates=scene_render_candidates,
             render_interactive=interactive,
+            texture_max_width=texture_max_width,
+            interactive_texture_max_width=interactive_texture_max_width,
+            texture_resample=texture_resample,
+            texture_flip_u=texture_flip_u,
+            texture_flip_v=texture_flip_v,
+            texture_transpose_uv=texture_transpose_uv,
+            texture_rotate_deg=texture_rotate_deg,
         )
         per_scene.append(result)
 
@@ -1003,6 +1191,47 @@ def parse_args() -> argparse.Namespace:
         help="Also write interactive HTML viewers for each evaluated scene.",
     )
     parser.add_argument(
+        "--texture-resample",
+        type=str,
+        choices=["nearest", "bilinear", "bicubic"],
+        default="nearest",
+        help="Resampling filter used when downscaling camera textures. Use nearest for sharp/non-smoothed pixels.",
+    )
+    parser.add_argument(
+        "--texture-max-width",
+        type=int,
+        default=128,
+        help="Maximum texture width for static 3D frustum rendering. Increase for sharper detail, lower for speed.",
+    )
+    parser.add_argument(
+        "--interactive-texture-max-width",
+        type=int,
+        default=96,
+        help="Maximum texture width for interactive HTML frustum texturing. Increase for sharper textures (larger HTML / slower rendering).",
+    )
+    parser.add_argument(
+        "--texture-flip-u",
+        action="store_true",
+        help="Flip texture coordinates horizontally (U direction).",
+    )
+    parser.add_argument(
+        "--texture-flip-v",
+        action="store_true",
+        help="Flip texture coordinates vertically (V direction).",
+    )
+    parser.add_argument(
+        "--texture-transpose-uv",
+        action="store_true",
+        help="Transpose texture coordinates (swap U and V).",
+    )
+    parser.add_argument(
+        "--texture-rotate-deg",
+        type=int,
+        choices=[0, 90, 180, 270],
+        default=0,
+        help="Rotate frustum texture after UV transforms.",
+    )
+    parser.add_argument(
         "--skip-official",
         action="store_true",
         help="Skip the official reference dataset and run only the custom dataset.",
@@ -1035,6 +1264,13 @@ def main() -> None:
     print(f"official_dir: {official_dir}")
     print(f"custom_dir: {custom_dir}")
     print(f"out_dir: {out_root}")
+    print(f"texture_resample: {args.texture_resample}")
+    print(f"texture_max_width: {args.texture_max_width}")
+    print(f"interactive_texture_max_width: {args.interactive_texture_max_width}")
+    print(f"texture_flip_u: {args.texture_flip_u}")
+    print(f"texture_flip_v: {args.texture_flip_v}")
+    print(f"texture_transpose_uv: {args.texture_transpose_uv}")
+    print(f"texture_rotate_deg: {args.texture_rotate_deg}")
 
     official_ref_step = None
     official = None
@@ -1047,6 +1283,13 @@ def main() -> None:
             limit_scenes=normalize_limit(args.official_limit_scenes),
             max_3d_scenes=normalize_scene_limit(args.max_3d_scenes),
             interactive=args.interactive_html,
+            texture_max_width=args.texture_max_width,
+            interactive_texture_max_width=args.interactive_texture_max_width,
+            texture_resample=args.texture_resample,
+            texture_flip_u=args.texture_flip_u,
+            texture_flip_v=args.texture_flip_v,
+            texture_transpose_uv=args.texture_transpose_uv,
+            texture_rotate_deg=args.texture_rotate_deg,
         )
 
         official_scenes = official.get("scenes", [])
@@ -1073,6 +1316,13 @@ def main() -> None:
             reference_median_step=official_ref_step,
             max_3d_scenes=normalize_scene_limit(args.max_3d_scenes),
             interactive=args.interactive_html,
+            texture_max_width=args.texture_max_width,
+            interactive_texture_max_width=args.interactive_texture_max_width,
+            texture_resample=args.texture_resample,
+            texture_flip_u=args.texture_flip_u,
+            texture_flip_v=args.texture_flip_v,
+            texture_transpose_uv=args.texture_transpose_uv,
+            texture_rotate_deg=args.texture_rotate_deg,
         )
 
     comparison = make_single_dataset_comparison(official, custom)
