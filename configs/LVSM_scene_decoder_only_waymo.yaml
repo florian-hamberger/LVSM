@@ -2,12 +2,12 @@ model:
   class_name: model.LVSM_scene_decoder_only.Images2LatentScene
 
   image_tokenizer:
-    image_size: 256
+    image_size: 320
     patch_size: 8
     in_channels: 9  # 3 RGB + 3 direction + 3 Reference
 
   target_pose_tokenizer:
-    image_size: 256
+    image_size: 320
     patch_size: 8
     in_channels: 6  # 3 direction + 3 Reference
   transformer:
@@ -21,16 +21,18 @@ model:
 training:
   amp_dtype: bf16
   api_key_path: ./configs/api_keys.yaml
-  batch_size_per_gpu: 8
+  batch_size_per_gpu: 2
   beta1: 0.9
   beta2: 0.95
   allowed_gradnorm_factor: 5
   center_crop: true
   scene_scale_factor: 1.35
-  checkpoint_dir: ./experiments/checkpoints/LVSM_scene_decoder_only
+  #checkpoint_dir: ./experiments/checkpoints/LVSM_scene_decoder_only
+  #checkpoint_dir: ./pretrained_models/scene_decoder_only_256.pt
+  checkpoint_dir: ./pretrained_models/lvsm_scene_decoder_only_res512.pt
   checkpoint_every: 2000
   dataset_name: data.dataset_scene.Dataset
-  dataset_path: ./preprocessed_data/train/full_list.txt
+  dataset_path: ./preprocessed_data/test/full_list.txt
   grad_accum_steps: 1
   grad_checkpoint_every: 1
   grad_clip_norm: 1.0
@@ -71,9 +73,9 @@ training:
 
 # inference / evaluation
 inference:
-  if_inference: False
-  compute_metrics: False
-  view_idx_file_path: ./data/LVSM_waymo_v1.json
+  if_inference: True
+  compute_metrics: True
+  view_idx_file_path: ./data/LVSM_waymo_v20.json
   render_video: False
   render_video_config:
     traj_type: interpolate
