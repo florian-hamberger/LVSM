@@ -21,7 +21,7 @@ model:
 training:
   amp_dtype: bf16
   api_key_path: ./configs/api_keys.yaml
-  batch_size_per_gpu: 2
+  batch_size_per_gpu: 1
   beta1: 0.9
   beta2: 0.95
   allowed_gradnorm_factor: 5
@@ -75,7 +75,7 @@ training:
 inference:
   if_inference: True
   compute_metrics: True
-  view_idx_file_path: ./data/LVSM_waymo_v20.json
+  view_idx_file_path: ./data/LVSM_waymo_v22.json
   render_video: False
   render_video_config:
     traj_type: interpolate
