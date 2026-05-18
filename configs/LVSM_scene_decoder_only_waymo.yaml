@@ -71,6 +71,9 @@ training:
   weight_decay: 0.05
 
 
+  log_camera_matrices: false
+
+
 # inference / evaluation
 inference:
   if_inference: True

@@ -18,6 +18,7 @@ class Images2LatentScene(nn.Module):
         super().__init__()
         self.config = config
         self.process_data = data_utils.ProcessData(config)
+        self._did_log_camera_matrices = False
 
         # Initialize both input tokenizers, and output de-tokenizer
         self._init_tokenizers()
@@ -187,11 +188,35 @@ class Images2LatentScene(nn.Module):
             return pose_cond
         else:
             return torch.cat([images * 2.0 - 1.0, pose_cond], dim=2)
+
+
+    def _maybe_log_camera_matrices(self, input_batch, target_batch):
+        if self._did_log_camera_matrices:
+            return
+        if not self.config.training.get("log_camera_matrices", False):
+            return
+
+        self._did_log_camera_matrices = True
+        with torch.no_grad():
+            input_c2w = input_batch.c2w.detach().cpu()
+            target_c2w = target_batch.c2w.detach().cpu()
+            input_fx = input_batch.fxfycxcy.detach().cpu()
+            target_fx = target_batch.fxfycxcy.detach().cpu()
+
+            print("[LVSM] Input intrinsics (fxfycxcy) sample[0]:")
+            print(input_fx[0].numpy())
+            print("[LVSM] Target intrinsics (fxfycxcy) sample[0]:")
+            print(target_fx[0].numpy())
+            print("[LVSM] Input extrinsics (c2w) sample[0]:")
+            print(input_c2w[0].numpy())
+            print("[LVSM] Target extrinsics (c2w) sample[0]:")
+            print(target_c2w[0].numpy())
     
     
     def forward(self, data_batch, has_target_image=True):
 
         input, target = self.process_data(data_batch, has_target_image=has_target_image, target_has_input = self.config.training.target_has_input, compute_rays=True)
+        self._maybe_log_camera_matrices(input, target)
 
         # Process input images
         posed_input_images = self.get_posed_input(
