@@ -1,5 +1,5 @@
 model:
-  class_name: model.LVSM_scene_decoder_only.Images2LatentScene
+  class_name: model.LVSM_scene_encoder_decoder.Images2LatentScene
 
   image_tokenizer:
     image_size: 320
@@ -13,10 +13,12 @@ model:
   transformer:
     d: 768
     d_head: 64
-    n_layer: 24
+    encoder_n_layer: 12
+    decoder_n_layer: 12
     special_init: true
     depth_init: true
     use_qk_norm: true
+    n_latent_vectors: 3072 # 3x32x32
 
 training:
   amp_dtype: bf16
@@ -27,30 +29,30 @@ training:
   allowed_gradnorm_factor: 5
   center_crop: true
   scene_scale_factor: 1.35
-  #checkpoint_dir: ./experiments/checkpoints/LVSM_scene_decoder_only
-  checkpoint_dir: ./pretrained_models/lvsm_scene_decoder_only_512.pt
+  #checkpoint_dir: ./experiments/checkpoints/LVSM_scene_encoder_decoder
+  checkpoint_dir: ./pretrained_models/lvsm_scene_encoder_decoder_512.pt
   checkpoint_every: 2000
   dataset_name: data.dataset_scene.Dataset
   dataset_path: ./preprocessed_data/test/full_list.txt
   grad_accum_steps: 1
   grad_checkpoint_every: 1
   grad_clip_norm: 1.0
-
   l2_loss_weight: 1.0
   lpips_loss_weight: 0.0
   perceptual_loss_weight: 0.5
 
   lr: 0.0004
   train_steps: 100000
-
-
   num_input_views: 2
   num_target_views: 6
   num_threads: 8
   num_views: 8
   num_workers: 4
+
   prefetch_factor: 32
   print_every: 20
+
+
 
 
   square_crop: true
@@ -62,7 +64,7 @@ training:
     max_frame_dist: 192
     min_frame_dist: 25
   vis_every: 1000
-  wandb_exp_name: LVSM_scene_decoder_only
+  wandb_exp_name: LVSM_scene_encoder_decoder
   wandb_log_every: 50
   
   wandb_project: LVSM
@@ -70,19 +72,14 @@ training:
   weight_decay: 0.05
 
 
-  log_camera_matrices: false
-
-
 # inference / evaluation
 inference:
   if_inference: True
   compute_metrics: True
-  view_idx_file_path: ./data/LVSM_waymo_v20.json
+  view_idx_file_path: ./data/LVSM_waymo_v20c.json
   render_video: False
   render_video_config:
     traj_type: interpolate
     num_frames: 60
     loop_video: True 
     order_poses: False
-
-  
