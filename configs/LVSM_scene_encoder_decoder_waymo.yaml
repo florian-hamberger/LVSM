@@ -76,7 +76,7 @@ training:
 inference:
   if_inference: True
   compute_metrics: True
-  view_idx_file_path: ./data/LVSM_waymo_v20c.json
+  view_idx_file_path: ./data/LVSM_waymo_v23_h353.json
   render_video: False
   render_video_config:
     traj_type: interpolate
